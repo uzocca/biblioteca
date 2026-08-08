@@ -593,15 +593,26 @@ function gbToBook(v, isbn){
     isbn: isbn||'', coverUrl: cover
   };
 }
+async function gbFetch(qRaw){
+  for(const suffix of ['','&country=IT']){
+    try {
+      const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${qRaw}${suffix}&maxResults=5`);
+      if(!resp.ok) continue;
+      const data = await resp.json();
+      if(data.items && data.items.length) return data.items;
+    } catch(e){}
+  }
+  return [];
+}
 async function srcGoogleBooks(isbn){
-  try {
-    const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&country=IT`);
-    const data = await resp.json();
-    if(!data.items || !data.items.length) return null;
-    const v = data.items[0].volumeInfo;
-    if(!v || !v.title) return null;
-    return gbToBook(v, isbn);
-  } catch(e){ return null; }
+  const items = await gbFetch(`isbn:${isbn}`);
+  if(!items.length) return null;
+  let hit = items.find(it => {
+    const ids = (it.volumeInfo && it.volumeInfo.industryIdentifiers) || [];
+    return ids.some(x => (x.identifier||'').replace(/[^0-9Xx]/g,'').toUpperCase() === isbn);
+  }) || items.find(it => it.volumeInfo && it.volumeInfo.title);
+  if(!hit || !hit.volumeInfo || !hit.volumeInfo.title) return null;
+  return gbToBook(hit.volumeInfo, isbn);
 }
 
 async function resolveISBN(raw){
@@ -636,12 +647,9 @@ async function fetchByTitle(){
   try {
     let book = null;
     try {
-      const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&country=IT&maxResults=5`);
-      const data = await resp.json();
-      if(data.items && data.items.length){
-        const hit = data.items.find(it=>it.volumeInfo && it.volumeInfo.title) ;
-        if(hit) book = gbToBook(hit.volumeInfo, '');
-      }
+      const items = await gbFetch(encodeURIComponent(q));
+      const hit = items.find(it=>it.volumeInfo && it.volumeInfo.title);
+      if(hit) book = gbToBook(hit.volumeInfo, '');
     } catch(e){}
     if(!book || !book.title){
       try {
