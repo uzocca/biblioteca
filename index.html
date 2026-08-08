@@ -240,7 +240,7 @@
     </div>
 
     <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="closeSettings()">Chiudi</button>
-    <div style="text-align:center; font-size:11px; color:#636366; margin-top:14px;">Versione 10 · sync protetto (anti-cancellazione)</div>
+    <div style="text-align:center; font-size:11px; color:#636366; margin-top:14px;">Versione 11 · verifica ISBN su tutte le fonti</div>
   </div>
 </div>
 
@@ -604,10 +604,21 @@ function openScanner(){
 function startQR(){
   if(scannerActive) return;
   try {
-    html5QrCode = new Html5Qrcode("qr-reader");
-    html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 130 } },
+    let formats;
+    if(window.Html5QrcodeSupportedFormats){
+      const F = window.Html5QrcodeSupportedFormats;
+      formats = [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E];
+    }
+    html5QrCode = new Html5Qrcode("qr-reader", formats ? { formatsToSupport: formats, verbose:false } : undefined);
+    const config = {
+      fps: 10,
+      qrbox: (vw, vh) => { const w = Math.min(320, Math.floor(vw*0.88)); return { width: w, height: Math.max(90, Math.floor(w*0.5)) }; },
+      aspectRatio: 1.4
+    };
+    html5QrCode.start({ facingMode: "environment" }, config,
       (decodedText) => {
-        if(/^\d{10,13}$/.test(decodedText)){ stopQR(); document.getElementById('isbn-manual-input').value = decodedText; fetchByISBN(decodedText); }
+        const c = (decodedText||'').replace(/[^0-9Xx]/g,'');
+        if(/^\d{10,13}$/.test(c)){ stopQR(); document.getElementById('isbn-manual-input').value = c; fetchByISBN(c); }
       }, () => {}
     ).then(()=>{ scannerActive=true; }).catch(err => {
       document.getElementById('qr-reader').innerHTML = '<div style="padding:24px;text-align:center;color:#8e8e93;font-size:13px">📷 Fotocamera non disponibile.<br>Concedi il permesso alla fotocamera nelle impostazioni del browser, oppure usa l\'inserimento manuale qui sotto.</div>';
@@ -644,6 +655,7 @@ function isbnVariants(raw){
 
 /* -- Fonti dati (con diagnostica) -- */
 let diagLog = '';
+let lastSource = '';
 async function srcOpenLibraryData(isbn){
   try {
     const resp = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
@@ -651,7 +663,11 @@ async function srcOpenLibraryData(isbn){
     const data = await resp.json();
     const info = data[`ISBN:${isbn}`];
     if(!info || !info.title){ diagLog += ' OLdati:0'; return null; }
-    diagLog += ' OLdati:OK';
+    // VERIFICA: l'ISBN cercato deve comparire tra gli identificatori del record
+    const ids = [];
+    if(info.identifiers){ ['isbn_10','isbn_13'].forEach(k => (info.identifiers[k]||[]).forEach(v => ids.push(cleanISBN(v)))); }
+    if(ids.length && !ids.includes(isbn)){ diagLog += ' OLdati:mismatch'; return null; }
+    diagLog += ' OLdati:OK'; lastSource = 'OpenLibrary';
     return {
       title: info.title || '',
       author: info.authors ? info.authors.map(a=>a.name).join(', ') : '',
@@ -662,12 +678,15 @@ async function srcOpenLibraryData(isbn){
 }
 async function srcOpenLibrarySearch(isbn){
   try {
-    const resp = await fetch(`https://openlibrary.org/search.json?isbn=${isbn}&fields=title,author_name,first_publish_year,cover_i&limit=1`);
+    const resp = await fetch(`https://openlibrary.org/search.json?isbn=${isbn}&fields=title,author_name,first_publish_year,cover_i,isbn&limit=1`);
     if(!resp.ok){ diagLog += ` OLcerca:${resp.status}`; return null; }
     const data = await resp.json();
     if(!data.docs || !data.docs.length || !data.docs[0].title){ diagLog += ' OLcerca:0'; return null; }
-    diagLog += ' OLcerca:OK';
     const d = data.docs[0];
+    // VERIFICA: la scheda deve contenere davvero l'ISBN cercato
+    const ids = (d.isbn||[]).map(cleanISBN);
+    if(!ids.includes(isbn)){ diagLog += ' OLcerca:mismatch'; return null; }
+    diagLog += ' OLcerca:OK'; lastSource = 'OpenLibrary';
     return {
       title: d.title || '',
       author: d.author_name ? d.author_name.join(', ') : '',
@@ -716,11 +735,12 @@ async function srcGoogleBooks(isbn){
     return ids.some(x => (x.identifier||'').replace(/[^0-9Xx]/g,'').toUpperCase() === isbn);
   });
   if(!hit || !hit.volumeInfo || !hit.volumeInfo.title){ diagLog += ' Google:no-match'; return null; }
+  lastSource = 'Google Books';
   return gbToBook(hit.volumeInfo, isbn);
 }
 
 async function resolveISBN(raw){
-  diagLog = '';
+  diagLog = ''; lastSource = '';
   const variants = isbnVariants(raw);
   const sources = [srcGoogleBooks, srcOpenLibraryData, srcOpenLibrarySearch];
   for(const v of variants){
@@ -745,7 +765,7 @@ async function fetchByISBN(isbn){
   const d = document.getElementById('diag'); if(d) d.style.display='none';
   try {
     const book = await resolveISBN(clean);
-    if(book && book.title){ closeScanner(); openManualForm(book); }
+    if(book && book.title){ closeScanner(); openManualForm(book); showToast(`Trovato su ${lastSource||'archivio'} ✓`); }
     else { showToast('ISBN non trovato – prova per titolo o inserisci a mano','error'); showDiag(`ISBN ${clean}`); }
   } catch(e){ showToast('Errore di rete – inserisci a mano','error'); }
   finally { document.getElementById('isbn-loading').style.display='none'; }
