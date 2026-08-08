@@ -222,7 +222,7 @@
       <div class="btn-row" style="margin-top:8px">
         <button class="btn btn-secondary" onclick="ghPush(true)">⬆️ Sincronizza ora</button>
       </div>
-      <div class="hint">Salvataggio <b>automatico</b> ad ogni modifica e <b>caricamento automatico all'apertura</b> dell'app. Il token resta solo su questo dispositivo. Usa un token <b>fine-grained</b> limitato al repo privato, permesso "Contents: Read and write".</div>
+      <div class="hint">Salvataggio <b>automatico</b> ad ogni modifica, con conferma visibile in alto ("☁︎ ora · N libri"). All'apertura ricarica dal repo <b>senza mai cancellare</b> i libri locali se il repo è vuoto o irraggiungibile. Il token resta solo su questo dispositivo.</div>
     </div>
 
     <div class="settings-block">
@@ -232,12 +232,15 @@
         <button class="btn btn-secondary" onclick="exportCSV()">⬇️ Export CSV</button>
         <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆️ Importa JSON</button>
       </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn btn-secondary" onclick="restoreLocalBackup()">♻️ Recupera copia locale</button>
+      </div>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(event)">
-      <div class="hint">L'import unisce i libri del file a quelli presenti, senza cancellare nulla.</div>
+      <div class="hint">Scarica ogni tanto un <b>Export JSON</b>: è la tua rete di sicurezza definitiva. "Recupera copia locale" ripristina l'ultima copia salvata su questo dispositivo, se la lista si fosse svuotata per sbaglio.</div>
     </div>
 
     <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="closeSettings()">Chiudi</button>
-    <div style="text-align:center; font-size:11px; color:#636366; margin-top:14px;">Versione 9 · ricerca ISBN a corrispondenza esatta</div>
+    <div style="text-align:center; font-size:11px; color:#636366; margin-top:14px;">Versione 10 · sync protetto (anti-cancellazione)</div>
   </div>
 </div>
 
@@ -259,13 +262,18 @@ if(categories === null){
 function b64encode(str){ return btoa(unescape(encodeURIComponent(str))); }
 function b64decode(str){ return decodeURIComponent(escape(atob(str))); }
 
+let lastSyncInfo = JSON.parse(localStorage.getItem('biblioteca_sync') || 'null');
+
 function saveBooks(pushToGh=true){
   localStorage.setItem('biblioteca_books', JSON.stringify(books));
+  try { localStorage.setItem('biblioteca_books_bak', JSON.stringify({ts:Date.now(), books, categories})); } catch(e){}
   if(pushToGh && ghConfig && ghConfig.token) ghPush(false);
+  else setSyncStatus();
 }
 function saveCats(pushToGh=true){
   localStorage.setItem('biblioteca_cats', JSON.stringify(categories));
   if(pushToGh && ghConfig && ghConfig.token) ghPush(false);
+  else setSyncStatus();
 }
 
 function showToast(msg, type='ok'){
@@ -274,11 +282,24 @@ function showToast(msg, type='ok'){
   t.className = 'toast' + (type==='error' ? ' error' : '');
   t.style.display = 'block';
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.style.display = 'none', 3200);
+  t._timer = setTimeout(() => t.style.display = 'none', 4200);
 }
-function updateSyncDot(){
-  document.getElementById('sync-dot').textContent = (ghConfig && ghConfig.token) ? '🟢 sync' : '';
+function setSyncStatus(state, msg){
+  const el = document.getElementById('sync-dot');
+  if(!el) return;
+  if(!ghConfig || !ghConfig.token){ el.textContent = '⚠︎ solo locale'; el.style.color = '#ffd60a'; return; }
+  if(state==='saving'){ el.textContent = '↻ salvataggio…'; el.style.color = '#8e8e93'; return; }
+  if(state==='error'){ el.textContent = '⚠︎ ' + (msg||'errore sync'); el.style.color = '#ff453a'; return; }
+  if(state==='saved' || (!state && lastSyncInfo && lastSyncInfo.ok)){
+    const t = lastSyncInfo ? new Date(lastSyncInfo.ts) : new Date();
+    const hh = String(t.getHours()).padStart(2,'0'), mm = String(t.getMinutes()).padStart(2,'0');
+    el.textContent = `☁︎ ${hh}:${mm} · ${books.length}`;
+    el.style.color = '#30d158';
+    return;
+  }
+  el.textContent = '⚠︎ non ancora sincronizzato'; el.style.color = '#ffd60a';
 }
+function updateSyncDot(){ setSyncStatus(); }
 
 /* ---------- Categorie ---------- */
 function renderCatList(){
@@ -372,45 +393,84 @@ function saveGhConfig(){
   if(!repo || !token){ showToast('Inserisci repo e token','error'); return; }
   ghConfig = { repo, path, token };
   localStorage.setItem('biblioteca_gh', JSON.stringify(ghConfig));
-  updateSyncDot();
+  setSyncStatus();
   showToast('Configurazione salvata ✓');
 }
+function ghHeaders(){ return { 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json' }; }
+async function ghReadRemote(){
+  // ritorna {sha, books, ok} o {ok:false}
+  try {
+    const url = `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}?t=${Date.now()}`;
+    const resp = await fetch(url, { headers: ghHeaders(), cache:'no-store' });
+    if(resp.status===200){
+      const cur = await resp.json();
+      let books = null, categories = null;
+      try {
+        const parsed = JSON.parse(b64decode(cur.content.replace(/\n/g,'')));
+        if(Array.isArray(parsed)) books = parsed;
+        else { books = Array.isArray(parsed.books)?parsed.books:null; categories = Array.isArray(parsed.categories)?parsed.categories:null; }
+      } catch(e){ return { ok:true, unreadable:true, sha:cur.sha }; }
+      return { ok:true, sha:cur.sha, books, categories };
+    }
+    if(resp.status===404) return { ok:true, missing:true };
+    return { ok:false, status:resp.status };
+  } catch(e){ return { ok:false, status:'rete' }; }
+}
 async function ghPush(manual){
-  if(!ghConfig || !ghConfig.token){ if(manual) showToast('Configura prima GitHub','error'); return; }
+  if(!ghConfig || !ghConfig.token){ setSyncStatus(); if(manual) showToast('Configura prima GitHub','error'); return; }
+  setSyncStatus('saving');
+  const remote = await ghReadRemote();
+  if(!remote.ok){ setSyncStatus('error'); showToast('Sync non riuscito ('+remote.status+') – i dati restano in locale','error'); return; }
+  // PROTEZIONE: non sovrascrivere un archivio pieno sul repo con uno vuoto/quasi vuoto in locale
+  const remoteCount = (remote.books && remote.books.length) || 0;
+  if(remoteCount >= 5 && books.length === 0){
+    if(!manual){
+      setSyncStatus('error','salvataggio bloccato');
+      showToast(`Salvataggio bloccato: sul repo ci sono ${remoteCount} libri e in locale 0. Nulla è stato sovrascritto.`,'error');
+      return;
+    }
+    if(!confirm(`ATTENZIONE: stai per sostituire ${remoteCount} libri sul repo con 0. Sei sicuro?`)){ setSyncStatus(); return; }
+  }
   try {
     const url = `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}`;
-    let sha = null;
-    const getResp = await fetch(url, { headers: { 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json' }});
-    if(getResp.status===200){ const cur = await getResp.json(); sha = cur.sha; }
     const payload = { version: 2, updated: new Date().toISOString(), books, categories };
-    const body = { message: `Aggiornamento biblioteca ${new Date().toISOString()}`, content: b64encode(JSON.stringify(payload, null, 2)) };
-    if(sha) body.sha = sha;
-    const putResp = await fetch(url, {
-      method:'PUT',
-      headers:{ 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' },
-      body: JSON.stringify(body)
-    });
-    if(putResp.ok){ if(manual) showToast('Sincronizzato su GitHub ✓'); }
-    else { const e = await putResp.json(); showToast('Errore sync: '+(e.message||putResp.status),'error'); }
-  } catch(e){ showToast('Errore di rete durante il sync','error'); }
+    const body = { message: `Biblioteca: ${books.length} libri ${new Date().toISOString()}`, content: b64encode(JSON.stringify(payload, null, 2)) };
+    if(remote.sha) body.sha = remote.sha;
+    const putResp = await fetch(url, { method:'PUT', headers:{ ...ghHeaders(), 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+    if(putResp.ok){
+      lastSyncInfo = { ts: Date.now(), count: books.length, ok:true };
+      localStorage.setItem('biblioteca_sync', JSON.stringify(lastSyncInfo));
+      setSyncStatus('saved');
+      if(manual) showToast(`Sincronizzato ✓ (${books.length} libri)`);
+    } else {
+      const e = await putResp.json().catch(()=>({}));
+      setSyncStatus('error');
+      showToast('Errore sync: '+(e.message||putResp.status)+' – dati salvi in locale','error');
+    }
+  } catch(e){ setSyncStatus('error'); showToast('Errore di rete nel sync – dati salvi in locale','error'); }
 }
 async function ghPull(manual){
   if(!ghConfig || !ghConfig.token){ if(manual) showToast('Configura prima GitHub','error'); return; }
-  try {
-    const url = `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}?t=${Date.now()}`;
-    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json' }, cache:'no-store' });
-    if(resp.status===200){
-      const cur = await resp.json();
-      const content = b64decode(cur.content.replace(/\n/g,''));
-      const parsed = JSON.parse(content);
-      if(Array.isArray(parsed)){ books = parsed; }
-      else { if(Array.isArray(parsed.books)) books = parsed.books; if(Array.isArray(parsed.categories)) categories = parsed.categories; }
-      saveBooks(false); saveCats(false);
-      renderBooks();
-      if(manual) showToast(`Caricati ${books.length} libri da GitHub ✓`);
-    } else if(resp.status===404){ if(manual) showToast('File non ancora presente sul repo','error'); }
-    else { if(manual) showToast('Errore caricamento: '+resp.status,'error'); }
-  } catch(e){ if(manual) showToast('Errore di rete durante il caricamento','error'); }
+  const remote = await ghReadRemote();
+  if(!remote.ok){ if(manual) showToast('Rete/GitHub non disponibile: tengo i libri locali','error'); setSyncStatus(); return; }
+  if(remote.missing){ if(manual) showToast('File non ancora presente sul repo','error'); return; }
+  if(remote.unreadable){ if(manual) showToast('File sul repo illeggibile: tengo i libri locali','error'); return; }
+  const inBooks = remote.books || [];
+  // PROTEZIONE: mai svuotare un archivio locale pieno con un repo vuoto
+  if(inBooks.length === 0 && books.length > 0){
+    setSyncStatus();
+    if(manual) showToast(`Il repo è vuoto: mantengo i ${books.length} libri locali (non sovrascritti)`,'error');
+    return;
+  }
+  books = inBooks;
+  if(remote.categories) categories = remote.categories;
+  localStorage.setItem('biblioteca_books', JSON.stringify(books));
+  localStorage.setItem('biblioteca_cats', JSON.stringify(categories));
+  try { localStorage.setItem('biblioteca_books_bak', JSON.stringify({ts:Date.now(), books, categories})); } catch(e){}
+  lastSyncInfo = { ts: Date.now(), count: books.length, ok:true };
+  localStorage.setItem('biblioteca_sync', JSON.stringify(lastSyncInfo));
+  renderBooks(); setSyncStatus('saved');
+  if(manual) showToast(`Caricati ${books.length} libri da GitHub ✓`);
 }
 
 /* ---------- Backup ---------- */
@@ -420,6 +480,18 @@ function download(filename, text, type){
   a.href = URL.createObjectURL(blob);
   a.download = filename; a.click();
   URL.revokeObjectURL(a.href);
+}
+function restoreLocalBackup(){
+  let bak;
+  try { bak = JSON.parse(localStorage.getItem('biblioteca_books_bak')||'null'); } catch(e){ bak = null; }
+  if(!bak || !Array.isArray(bak.books) || !bak.books.length){ showToast('Nessuna copia locale trovata','error'); return; }
+  const when = bak.ts ? new Date(bak.ts).toLocaleString('it-IT') : 'sconosciuta';
+  if(!confirm(`Ripristinare ${bak.books.length} libri dall'ultima copia locale (${when})? I libri attuali (${books.length}) verranno sostituiti.`)) return;
+  books = bak.books;
+  if(Array.isArray(bak.categories)) categories = bak.categories;
+  saveBooks();
+  renderBooks();
+  showToast(`Ripristinati ${books.length} libri dalla copia locale ✓`);
 }
 function exportJSON(){
   const payload = { version: 2, updated: new Date().toISOString(), books, categories };
@@ -783,8 +855,8 @@ function closeForm(){ document.getElementById('modal-form').style.display='none'
 
 /* ---------- Avvio ---------- */
 window.GBOOKS_KEY = localStorage.getItem('biblioteca_gbkey') || '';
-updateSyncDot();
 renderBooks();
+setSyncStatus();
 if(ghConfig && ghConfig.token){ ghPull(false); }
 </script>
 </body>
