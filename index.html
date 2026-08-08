@@ -125,9 +125,14 @@
     <div class="section-title">Inquadra il codice a barre</div>
     <div class="scanner-area"><div id="qr-reader"></div></div>
     <div class="section-title">oppure inserisci l'ISBN a mano</div>
-    <div class="isbn-manual" style="margin-bottom:16px">
+    <div class="isbn-manual" style="margin-bottom:14px">
       <input class="form-input" type="text" inputmode="numeric" id="isbn-manual-input" placeholder="es. 9788807883012" maxlength="17" onkeydown="if(event.key==='Enter') fetchByISBN()">
-      <button class="btn btn-primary" onclick="fetchByISBN()">Cerca</button>
+      <button type="button" class="btn btn-primary" onmousedown="event.preventDefault()" onclick="fetchByISBN()">Cerca</button>
+    </div>
+    <div class="section-title">oppure cerca per titolo</div>
+    <div class="isbn-manual" style="margin-bottom:16px">
+      <input class="form-input" type="text" id="title-search-input" placeholder="es. La libertà che cura Basaglia" onkeydown="if(event.key==='Enter') fetchByTitle()">
+      <button type="button" class="btn btn-primary" onmousedown="event.preventDefault()" onclick="fetchByTitle()">Cerca</button>
     </div>
     <div id="isbn-loading" class="loading-isbn" style="display:none">🔍 Ricerca in corso...</div>
     <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="openManualForm(null)">✏️ Inserisci manualmente</button>
@@ -192,7 +197,7 @@
       <div class="cat-list" id="cat-list"></div>
       <div class="cat-add">
         <input class="form-input" id="new-cat" type="text" placeholder="Nuova categoria" onkeydown="if(event.key==='Enter') addCategory()">
-        <button class="btn btn-primary" onclick="addCategory()">＋</button>
+        <button type="button" class="btn btn-primary" onmousedown="event.preventDefault()" onclick="addCategory()">＋ Aggiungi</button>
       </div>
       <div class="hint">Queste categorie compaiono nel menu a tendina quando aggiungi o modifichi un libro.</div>
     </div>
@@ -279,8 +284,9 @@ function renderCatList(){
 }
 function addCategory(){
   const input = document.getElementById('new-cat');
+  if(!input) return;
   const name = input.value.trim();
-  if(!name) return;
+  if(!name){ showToast('Scrivi il nome della categoria','error'); return; }
   if(categories.some(c=>c.toLowerCase()===name.toLowerCase())){ showToast('Categoria già presente','error'); return; }
   categories.push(name);
   categories.sort((a,b)=>a.localeCompare(b));
@@ -503,6 +509,7 @@ function renderBooks(){
 function openScanner(){
   document.getElementById('modal-scanner').style.display='flex';
   document.getElementById('isbn-manual-input').value='';
+  const ts = document.getElementById('title-search-input'); if(ts) ts.value='';
   document.getElementById('isbn-loading').style.display='none';
   startQR();
 }
@@ -522,12 +529,38 @@ function startQR(){
 function stopQR(){ if(html5QrCode && scannerActive){ html5QrCode.stop().catch(()=>{}); scannerActive=false; } }
 function closeScanner(){ stopQR(); document.getElementById('modal-scanner').style.display='none'; }
 
-async function tryOpenLibrary(isbn){
+/* -- Normalizzazione ISBN e varianti 10/13 -- */
+function cleanISBN(s){ return (s||'').replace(/[^0-9Xx]/g,'').toUpperCase(); }
+function isbn13to10(i13){
+  if(!/^978\d{10}$/.test(i13)) return null;
+  const core = i13.slice(3,12);
+  let sum=0; for(let k=0;k<9;k++) sum += (10-k)*parseInt(core[k],10);
+  let c=(11-(sum%11))%11; c = (c===10)?'X':String(c);
+  return core+c;
+}
+function isbn10to13(i10){
+  if(!/^\d{9}[0-9X]$/.test(i10)) return null;
+  const core = '978'+i10.slice(0,9);
+  let sum=0; for(let k=0;k<12;k++) sum += (k%2?3:1)*parseInt(core[k],10);
+  const c=(10-(sum%10))%10;
+  return core+String(c);
+}
+function isbnVariants(raw){
+  const s = cleanISBN(raw);
+  const set = new Set();
+  if(s) set.add(s);
+  if(s.length===13){ const t=isbn13to10(s); if(t) set.add(t); }
+  else if(s.length===10){ const t=isbn10to13(s); if(t) set.add(t); }
+  return [...set];
+}
+
+/* -- Fonti dati -- */
+async function srcOpenLibraryData(isbn){
   try {
     const resp = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
     const data = await resp.json();
     const info = data[`ISBN:${isbn}`];
-    if(!info) return null;
+    if(!info || !info.title) return null;
     return {
       title: info.title || '',
       author: info.authors ? info.authors.map(a=>a.name).join(', ') : '',
@@ -536,33 +569,93 @@ async function tryOpenLibrary(isbn){
     };
   } catch(e){ return null; }
 }
-async function tryGoogleBooks(isbn){
+async function srcOpenLibrarySearch(isbn){
   try {
-    const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+    const resp = await fetch(`https://openlibrary.org/search.json?isbn=${isbn}&fields=title,author_name,first_publish_year,cover_i&limit=1`);
     const data = await resp.json();
-    if(!data.items || !data.items.length) return null;
-    const v = data.items[0].volumeInfo;
-    let cover = v.imageLinks ? (v.imageLinks.thumbnail||v.imageLinks.smallThumbnail||'') : '';
-    cover = cover.replace('http://','https://').replace('&edge=curl','');
+    if(!data.docs || !data.docs.length || !data.docs[0].title) return null;
+    const d = data.docs[0];
     return {
-      title: v.title || '',
-      author: v.authors ? v.authors.join(', ') : '',
-      year: v.publishedDate ? (v.publishedDate.match(/\d{4}/)?.[0]||'') : '',
-      isbn, coverUrl: cover
+      title: d.title || '',
+      author: d.author_name ? d.author_name.join(', ') : '',
+      year: d.first_publish_year ? String(d.first_publish_year) : '',
+      isbn, coverUrl: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg` : ''
     };
   } catch(e){ return null; }
 }
+function gbToBook(v, isbn){
+  let cover = v.imageLinks ? (v.imageLinks.thumbnail||v.imageLinks.smallThumbnail||'') : '';
+  cover = cover.replace('http://','https://').replace('&edge=curl','');
+  return {
+    title: v.title || '',
+    author: v.authors ? v.authors.join(', ') : '',
+    year: v.publishedDate ? (v.publishedDate.match(/\d{4}/)?.[0]||'') : '',
+    isbn: isbn||'', coverUrl: cover
+  };
+}
+async function srcGoogleBooks(isbn){
+  try {
+    const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&country=IT`);
+    const data = await resp.json();
+    if(!data.items || !data.items.length) return null;
+    const v = data.items[0].volumeInfo;
+    if(!v || !v.title) return null;
+    return gbToBook(v, isbn);
+  } catch(e){ return null; }
+}
+
+async function resolveISBN(raw){
+  const variants = isbnVariants(raw);
+  const sources = [srcOpenLibraryData, srcGoogleBooks, srcOpenLibrarySearch];
+  for(const v of variants){
+    for(const src of sources){
+      const r = await src(v);
+      if(r && r.title){ r.isbn = cleanISBN(raw); return r; }
+    }
+  }
+  return null;
+}
 async function fetchByISBN(isbn){
-  isbn = isbn || document.getElementById('isbn-manual-input').value.replace(/[^0-9X]/gi,'');
-  if(!isbn || isbn.length < 10){ showToast('ISBN non valido','error'); return; }
+  isbn = isbn || document.getElementById('isbn-manual-input').value;
+  const clean = cleanISBN(isbn);
+  if(!clean || clean.length < 10){ showToast('ISBN non valido','error'); return; }
   document.getElementById('isbn-loading').style.display='block';
   try {
-    let book = await tryOpenLibrary(isbn);
-    if(!book || !book.title) book = await tryGoogleBooks(isbn);
+    const book = await resolveISBN(clean);
     if(book && book.title){ closeScanner(); openManualForm(book); }
-    else showToast('ISBN non trovato su nessuna fonte – inserisci a mano','error');
+    else showToast('ISBN non trovato – prova "Cerca per titolo" o inserisci a mano','error');
   } catch(e){ showToast('Errore di rete – inserisci a mano','error'); }
   finally { document.getElementById('isbn-loading').style.display='none'; }
+}
+
+/* -- Ricerca per titolo (rete di salvataggio per i libri italiani) -- */
+async function fetchByTitle(){
+  const q = (document.getElementById('title-search-input').value||'').trim();
+  if(!q){ showToast('Scrivi un titolo','error'); return; }
+  document.getElementById('isbn-loading').style.display='block';
+  try {
+    let book = null;
+    try {
+      const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&country=IT&maxResults=5`);
+      const data = await resp.json();
+      if(data.items && data.items.length){
+        const hit = data.items.find(it=>it.volumeInfo && it.volumeInfo.title) ;
+        if(hit) book = gbToBook(hit.volumeInfo, '');
+      }
+    } catch(e){}
+    if(!book || !book.title){
+      try {
+        const resp = await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(q)}&fields=title,author_name,first_publish_year,cover_i,isbn&limit=1`);
+        const data = await resp.json();
+        if(data.docs && data.docs.length && data.docs[0].title){
+          const d = data.docs[0];
+          book = { title:d.title, author:d.author_name?d.author_name.join(', '):'', year:d.first_publish_year?String(d.first_publish_year):'', isbn:d.isbn?d.isbn[0]:'', coverUrl:d.cover_i?`https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg`:'' };
+        }
+      } catch(e){}
+    }
+    if(book && book.title){ closeScanner(); openManualForm(book); }
+    else showToast('Nessun risultato – inserisci a mano','error');
+  } finally { document.getElementById('isbn-loading').style.display='none'; }
 }
 
 /* ---------- Form ---------- */
