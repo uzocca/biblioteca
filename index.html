@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>La Mia Biblioteca</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif; background: #1c1c1e; color: #f2f2f7; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+  .header { background: #2c2c2e; border-bottom: 0.5px solid #3a3a3c; padding: calc(12px + env(safe-area-inset-top)) 20px 12px; display: flex; align-items: center; justify-content: space-between; gap:8px; position:sticky; top:0; z-index:50; }
+  .header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  .header-icons { display: flex; gap: 8px; align-items:center; }
+  .sync-dot { font-size:11px; color:#636366; white-space:nowrap; }
+  .stats-bar { display: flex; gap: 12px; padding: 14px 20px; background: #2c2c2e; border-bottom: 0.5px solid #3a3a3c; overflow-x: auto; }
+  .stat { background: #3a3a3c; border-radius: 10px; padding: 8px 14px; white-space: nowrap; text-align: center; min-width: 80px; }
+  .stat-num { font-size: 20px; font-weight: 600; color: #ffd60a; }
+  .stat-label { font-size: 11px; color: #8e8e93; margin-top: 1px; }
+  .toolbar { display: flex; gap: 8px; padding: 12px 20px; background: #1c1c1e; flex-wrap: wrap; align-items: center; }
+  .search-box { flex: 1; min-width: 160px; background: #2c2c2e; border: 0.5px solid #3a3a3c; border-radius: 10px; padding: 8px 14px; color: #f2f2f7; font-size: 16px; outline: none; }
+  .search-box::placeholder { color: #636366; }
+  select { background: #2c2c2e; border: 0.5px solid #3a3a3c; border-radius: 8px; padding: 8px 10px; color: #f2f2f7; font-size: 13px; outline: none; cursor: pointer; }
+  .btn { border: none; border-radius: 10px; padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: opacity 0.15s; white-space: nowrap; }
+  .btn:active { opacity: 0.7; }
+  .btn-primary { background: #ffd60a; color: #1c1c1e; }
+  .btn-secondary { background: #2c2c2e; color: #f2f2f7; border: 0.5px solid #3a3a3c; }
+  .btn-danger { background: #ff453a; color: white; }
+  .btn-icon { background:#2c2c2e; border:0.5px solid #3a3a3c; border-radius:10px; width:38px; height:38px; display:flex; align-items:center; justify-content:center; font-size:16px; cursor:pointer; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
+  .books-grid { padding: 16px 20px calc(24px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .book-card { background: #2c2c2e; border-radius: 14px; border: 0.5px solid #3a3a3c; padding: 14px; display: flex; gap: 12px; transition: border-color 0.15s; }
+  .book-card:hover { border-color: #636366; }
+  .book-cover { width: 64px; height: 90px; border-radius: 6px; object-fit: cover; background: #3a3a3c; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+  .book-cover img { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+  .book-info { flex: 1; min-width: 0; }
+  .book-title { font-size: 15px; font-weight: 600; line-height: 1.3; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book-author { font-size: 13px; color: #8e8e93; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+  .tag { font-size: 11px; padding: 3px 8px; border-radius: 6px; font-weight: 500; }
+  .tag-letto { background: #1a3a2a; color: #30d158; }
+  .tag-leggendo { background: #3a2a00; color: #ffd60a; }
+  .tag-daLeggere { background: #2a2a3a; color: #636cff; }
+  .tag-cat { background: #3a3a3c; color: #aeaeb2; }
+  .stars { color: #ffd60a; font-size: 13px; margin-bottom: 6px; }
+  .book-location { font-size: 11px; color: #636366; display: flex; align-items: center; gap: 4px; }
+  .book-actions { display: flex; gap: 5px; margin-top: 8px; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; align-items: flex-end; justify-content: center; z-index: 100; }
+  .modal { background: #1c1c1e; border-radius: 20px 20px 0 0; width: 100%; max-width: 600px; max-height: 92vh; overflow-y: auto; padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); }
+  .modal-handle { width: 40px; height: 4px; background: #3a3a3c; border-radius: 2px; margin: 0 auto 20px; }
+  .modal h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+  .form-group { margin-bottom: 14px; }
+  .form-label { font-size: 12px; color: #8e8e93; margin-bottom: 5px; display: block; }
+  .form-input { width: 100%; background: #2c2c2e; border: 0.5px solid #3a3a3c; border-radius: 10px; padding: 10px 14px; color: #f2f2f7; font-size: 16px; outline: none; }
+  .form-input:focus { border-color: #ffd60a; }
+  select.form-input { cursor: pointer; }
+  textarea.form-input { min-height: 80px; resize: vertical; font-family: inherit; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .star-input { display: flex; gap: 4px; margin-top: 4px; }
+  .star-btn { background: none; border: none; font-size: 26px; cursor: pointer; color: #3a3a3c; transition: color 0.1s; padding:2px; }
+  .star-btn.active { color: #ffd60a; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .modal-actions .btn { flex: 1; justify-content: center; padding: 12px; font-size: 15px; }
+  .scanner-area { background: #2c2c2e; border-radius: 14px; overflow: hidden; margin-bottom: 16px; min-height: 200px; }
+  #qr-reader { width: 100%; }
+  .isbn-manual { display: flex; gap: 8px; }
+  .isbn-manual input { flex: 1; }
+  .empty-state { text-align: center; padding: 60px 20px; color: #636366; }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-size: 16px; }
+  .toast { position: fixed; top: calc(16px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); background: #30d158; color: white; padding: 10px 18px; border-radius: 10px; font-size: 14px; font-weight: 500; z-index: 200; max-width:88%; text-align:center; box-shadow:0 4px 16px rgba(0,0,0,0.4); }
+  .toast.error { background: #ff453a; }
+  .loading-isbn { text-align: center; padding: 16px; color: #8e8e93; font-size: 14px; }
+  .section-title { font-size: 13px; color: #636366; margin-bottom: 8px; margin-top:4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .settings-block { background:#2c2c2e; border:0.5px solid #3a3a3c; border-radius:14px; padding:14px; margin-bottom:16px; }
+  .settings-block .hint { font-size:12px; color:#636366; line-height:1.5; margin-top:8px; }
+  .btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+  .btn-row .btn { flex:1; justify-content:center; min-width:120px; }
+  .cat-list { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+  .cat-row { display:flex; align-items:center; gap:8px; background:#3a3a3c; border-radius:8px; padding:6px 10px; }
+  .cat-name { flex:1; font-size:14px; }
+  .cat-row button { background:none; border:none; color:#8e8e93; font-size:15px; cursor:pointer; padding:2px 6px; }
+  .cat-add { display:flex; gap:8px; }
+  .cat-add input { flex:1; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📚 La Mia Biblioteca</h1>
+  <div class="header-icons">
+    <span class="sync-dot" id="sync-dot"></span>
+    <button class="btn-icon" onclick="openSettings()" title="Impostazioni">⚙️</button>
+    <button class="btn btn-primary" onclick="openScanner()">＋ Aggiungi</button>
+  </div>
+</div>
+
+<div class="stats-bar" id="stats-bar"></div>
+
+<div class="toolbar">
+  <input class="search-box" type="text" placeholder="🔍 Cerca titolo o autore..." id="search-input" oninput="renderBooks()">
+  <select id="filter-status" onchange="renderBooks()">
+    <option value="">Tutti</option>
+    <option value="letto">✅ Letti</option>
+    <option value="leggendo">📖 In lettura</option>
+    <option value="daLeggere">🔖 Da leggere</option>
+  </select>
+  <select id="filter-cat" onchange="renderBooks()"><option value="">Tutte le categorie</option></select>
+  <select id="sort-by" onchange="renderBooks()">
+    <option value="recent">Recenti</option>
+    <option value="title">Titolo A–Z</option>
+    <option value="author">Autore A–Z</option>
+    <option value="rating">Voto ↓</option>
+  </select>
+</div>
+
+<div class="books-grid" id="books-grid"></div>
+
+<!-- SCANNER MODAL -->
+<div id="modal-scanner" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2>Aggiungi libro</h2>
+    <div class="section-title">Inquadra il codice a barre</div>
+    <div class="scanner-area"><div id="qr-reader"></div></div>
+    <div class="section-title">oppure inserisci l'ISBN a mano</div>
+    <div class="isbn-manual" style="margin-bottom:16px">
+      <input class="form-input" type="text" inputmode="numeric" id="isbn-manual-input" placeholder="es. 9788807883012" maxlength="17" onkeydown="if(event.key==='Enter') fetchByISBN()">
+      <button class="btn btn-primary" onclick="fetchByISBN()">Cerca</button>
+    </div>
+    <div id="isbn-loading" class="loading-isbn" style="display:none">🔍 Ricerca in corso...</div>
+    <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="openManualForm(null)">✏️ Inserisci manualmente</button>
+    <div style="height:16px"></div>
+    <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="closeScanner()">Annulla</button>
+  </div>
+</div>
+
+<!-- FORM MODAL -->
+<div id="modal-form" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2 id="form-title">Aggiungi libro</h2>
+    <div id="book-cover-preview" style="text-align:center;margin-bottom:14px;display:none">
+      <img id="cover-img" style="height:120px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    </div>
+    <div class="form-group"><label class="form-label">Titolo *</label><input class="form-input" id="f-title" type="text" placeholder="Titolo del libro"></div>
+    <div class="form-group"><label class="form-label">Autore</label><input class="form-input" id="f-author" type="text" placeholder="Nome Cognome"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Anno</label><input class="form-input" id="f-year" type="number" placeholder="2024"></div>
+      <div class="form-group"><label class="form-label">ISBN</label><input class="form-input" id="f-isbn" type="text" placeholder="978..."></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Stato lettura</label>
+        <select class="form-input" id="f-status">
+          <option value="daLeggere">🔖 Da leggere</option>
+          <option value="leggendo">📖 In lettura</option>
+          <option value="letto">✅ Letto</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Categoria</label>
+        <select class="form-input" id="f-cat" onchange="onCatSelect()"></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Posizione (scaffale/stanza)</label><input class="form-input" id="f-location" type="text" placeholder="es. Studio – Scaffale 2"></div>
+    <div class="form-group"><label class="form-label">Voto personale</label>
+      <div class="star-input" id="star-input">
+        <button class="star-btn" onclick="setRating(1)">★</button>
+        <button class="star-btn" onclick="setRating(2)">★</button>
+        <button class="star-btn" onclick="setRating(3)">★</button>
+        <button class="star-btn" onclick="setRating(4)">★</button>
+        <button class="star-btn" onclick="setRating(5)">★</button>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Note personali</label><textarea class="form-input" id="f-notes" placeholder="Impressioni, citazioni preferite..."></textarea></div>
+    <input type="hidden" id="f-cover-url"><input type="hidden" id="f-edit-id">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeForm()">Annulla</button>
+      <button class="btn btn-primary" onclick="saveBook()">Salva libro</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div id="modal-settings" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h2>⚙️ Impostazioni</h2>
+
+    <div class="settings-block">
+      <div class="section-title" style="margin-top:0">🏷️ Le mie categorie</div>
+      <div class="cat-list" id="cat-list"></div>
+      <div class="cat-add">
+        <input class="form-input" id="new-cat" type="text" placeholder="Nuova categoria" onkeydown="if(event.key==='Enter') addCategory()">
+        <button class="btn btn-primary" onclick="addCategory()">＋</button>
+      </div>
+      <div class="hint">Queste categorie compaiono nel menu a tendina quando aggiungi o modifichi un libro.</div>
+    </div>
+
+    <div class="settings-block">
+      <div class="section-title" style="margin-top:0">🔄 Sincronizzazione GitHub</div>
+      <div class="form-group"><label class="form-label">Repository (owner/nome)</label><input class="form-input" id="gh-repo" type="text" placeholder="uzocca/biblioteca-data"></div>
+      <div class="form-group"><label class="form-label">Percorso file</label><input class="form-input" id="gh-path" type="text" placeholder="biblioteca.json" value="biblioteca.json"></div>
+      <div class="form-group"><label class="form-label">Personal Access Token (fine-grained)</label><input class="form-input" id="gh-token" type="password" placeholder="github_pat_..."></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveGhConfig()">💾 Salva config</button>
+        <button class="btn btn-secondary" onclick="ghPull(true)">⬇️ Carica da GitHub</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn btn-secondary" onclick="ghPush(true)">⬆️ Sincronizza ora</button>
+      </div>
+      <div class="hint">Salvataggio <b>automatico</b> ad ogni modifica e <b>caricamento automatico all'apertura</b> dell'app. Il token resta solo su questo dispositivo. Usa un token <b>fine-grained</b> limitato al repo privato, permesso "Contents: Read and write".</div>
+    </div>
+
+    <div class="settings-block">
+      <div class="section-title" style="margin-top:0">💾 Backup locale</div>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="exportJSON()">⬇️ Export JSON</button>
+        <button class="btn btn-secondary" onclick="exportCSV()">⬇️ Export CSV</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">⬆️ Importa JSON</button>
+      </div>
+      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(event)">
+      <div class="hint">L'import unisce i libri del file a quelli presenti, senza cancellare nulla.</div>
+    </div>
+
+    <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="closeSettings()">Chiudi</button>
+  </div>
+</div>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+let books = JSON.parse(localStorage.getItem('biblioteca_books') || '[]');
+let categories = JSON.parse(localStorage.getItem('biblioteca_cats') || 'null');
+let ghConfig = JSON.parse(localStorage.getItem('biblioteca_gh') || 'null');
+let currentRating = 0;
+let html5QrCode = null;
+let scannerActive = false;
+
+if(categories === null){
+  categories = ['Narrativa','Saggistica','Filosofia','Storia','Cooperazione'];
+  saveCats(false);
+}
+
+function b64encode(str){ return btoa(unescape(encodeURIComponent(str))); }
+function b64decode(str){ return decodeURIComponent(escape(atob(str))); }
+
+function saveBooks(pushToGh=true){
+  localStorage.setItem('biblioteca_books', JSON.stringify(books));
+  if(pushToGh && ghConfig && ghConfig.token) ghPush(false);
+}
+function saveCats(pushToGh=true){
+  localStorage.setItem('biblioteca_cats', JSON.stringify(categories));
+  if(pushToGh && ghConfig && ghConfig.token) ghPush(false);
+}
+
+function showToast(msg, type='ok'){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (type==='error' ? ' error' : '');
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.style.display = 'none', 3200);
+}
+function updateSyncDot(){
+  document.getElementById('sync-dot').textContent = (ghConfig && ghConfig.token) ? '🟢 sync' : '';
+}
+
+/* ---------- Categorie ---------- */
+function renderCatList(){
+  const el = document.getElementById('cat-list');
+  if(!categories.length){ el.innerHTML = '<div style="color:#636366;font-size:13px">Nessuna categoria.</div>'; return; }
+  el.innerHTML = categories.map((c,i)=>`
+    <div class="cat-row">
+      <span class="cat-name">${escapeHtml(c)}</span>
+      <button onclick="renameCategory(${i})" title="Rinomina">✏️</button>
+      <button onclick="deleteCategory(${i})" title="Elimina">🗑</button>
+    </div>`).join('');
+}
+function addCategory(){
+  const input = document.getElementById('new-cat');
+  const name = input.value.trim();
+  if(!name) return;
+  if(categories.some(c=>c.toLowerCase()===name.toLowerCase())){ showToast('Categoria già presente','error'); return; }
+  categories.push(name);
+  categories.sort((a,b)=>a.localeCompare(b));
+  saveCats();
+  input.value='';
+  renderCatList();
+  showToast('Categoria aggiunta ✓');
+}
+function renameCategory(i){
+  const oldName = categories[i];
+  const name = prompt('Rinomina categoria:', oldName);
+  if(!name || !name.trim() || name.trim()===oldName) return;
+  const nn = name.trim();
+  categories[i] = nn;
+  categories.sort((a,b)=>a.localeCompare(b));
+  books.forEach(b=>{ if(b.category===oldName) b.category=nn; });
+  saveCats(false); saveBooks();
+  renderCatList(); renderBooks();
+  showToast('Categoria rinominata ✓');
+}
+function deleteCategory(i){
+  const name = categories[i];
+  const inUse = books.filter(b=>b.category===name).length;
+  const msg = inUse ? `Eliminare "${name}"? ${inUse} libro/i resteranno senza questa categoria.` : `Eliminare "${name}"?`;
+  if(!confirm(msg)) return;
+  categories.splice(i,1);
+  books.forEach(b=>{ if(b.category===name) b.category=''; });
+  saveCats(false); saveBooks();
+  renderCatList(); renderBooks();
+  showToast('Categoria eliminata');
+}
+function fillCatSelect(selected){
+  const sel = document.getElementById('f-cat');
+  let html = '<option value="">— Nessuna —</option>';
+  categories.forEach(c=>{ html += `<option value="${escapeHtml(c)}"${c===selected?' selected':''}>${escapeHtml(c)}</option>`; });
+  if(selected && !categories.includes(selected)) html += `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>`;
+  html += '<option value="__new__">＋ Nuova categoria…</option>';
+  sel.innerHTML = html;
+}
+function onCatSelect(){
+  const sel = document.getElementById('f-cat');
+  if(sel.value === '__new__'){
+    const name = prompt('Nome nuova categoria:');
+    if(name && name.trim()){
+      const nn = name.trim();
+      if(!categories.some(c=>c.toLowerCase()===nn.toLowerCase())){ categories.push(nn); categories.sort((a,b)=>a.localeCompare(b)); saveCats(); }
+      fillCatSelect(nn);
+    } else { fillCatSelect(''); }
+  }
+}
+
+/* ---------- GitHub sync ---------- */
+function openSettings(){
+  if(ghConfig){
+    document.getElementById('gh-repo').value = ghConfig.repo||'';
+    document.getElementById('gh-path').value = ghConfig.path||'biblioteca.json';
+    document.getElementById('gh-token').value = ghConfig.token||'';
+  }
+  renderCatList();
+  document.getElementById('modal-settings').style.display='flex';
+}
+function closeSettings(){ document.getElementById('modal-settings').style.display='none'; }
+function saveGhConfig(){
+  const repo = document.getElementById('gh-repo').value.trim();
+  const path = document.getElementById('gh-path').value.trim() || 'biblioteca.json';
+  const token = document.getElementById('gh-token').value.trim();
+  if(!repo || !token){ showToast('Inserisci repo e token','error'); return; }
+  ghConfig = { repo, path, token };
+  localStorage.setItem('biblioteca_gh', JSON.stringify(ghConfig));
+  updateSyncDot();
+  showToast('Configurazione salvata ✓');
+}
+async function ghPush(manual){
+  if(!ghConfig || !ghConfig.token){ if(manual) showToast('Configura prima GitHub','error'); return; }
+  try {
+    const url = `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}`;
+    let sha = null;
+    const getResp = await fetch(url, { headers: { 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json' }});
+    if(getResp.status===200){ const cur = await getResp.json(); sha = cur.sha; }
+    const payload = { version: 2, updated: new Date().toISOString(), books, categories };
+    const body = { message: `Aggiornamento biblioteca ${new Date().toISOString()}`, content: b64encode(JSON.stringify(payload, null, 2)) };
+    if(sha) body.sha = sha;
+    const putResp = await fetch(url, {
+      method:'PUT',
+      headers:{ 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' },
+      body: JSON.stringify(body)
+    });
+    if(putResp.ok){ if(manual) showToast('Sincronizzato su GitHub ✓'); }
+    else { const e = await putResp.json(); showToast('Errore sync: '+(e.message||putResp.status),'error'); }
+  } catch(e){ showToast('Errore di rete durante il sync','error'); }
+}
+async function ghPull(manual){
+  if(!ghConfig || !ghConfig.token){ if(manual) showToast('Configura prima GitHub','error'); return; }
+  try {
+    const url = `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}?t=${Date.now()}`;
+    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${ghConfig.token}`, 'Accept':'application/vnd.github+json' }, cache:'no-store' });
+    if(resp.status===200){
+      const cur = await resp.json();
+      const content = b64decode(cur.content.replace(/\n/g,''));
+      const parsed = JSON.parse(content);
+      if(Array.isArray(parsed)){ books = parsed; }
+      else { if(Array.isArray(parsed.books)) books = parsed.books; if(Array.isArray(parsed.categories)) categories = parsed.categories; }
+      saveBooks(false); saveCats(false);
+      renderBooks();
+      if(manual) showToast(`Caricati ${books.length} libri da GitHub ✓`);
+    } else if(resp.status===404){ if(manual) showToast('File non ancora presente sul repo','error'); }
+    else { if(manual) showToast('Errore caricamento: '+resp.status,'error'); }
+  } catch(e){ if(manual) showToast('Errore di rete durante il caricamento','error'); }
+}
+
+/* ---------- Backup ---------- */
+function download(filename, text, type){
+  const blob = new Blob([text], {type});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+function exportJSON(){
+  const payload = { version: 2, updated: new Date().toISOString(), books, categories };
+  download(`biblioteca_${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  showToast('Export JSON pronto ✓');
+}
+function csvField(v){ v = (v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; }
+function exportCSV(){
+  const cols = ['title','author','year','isbn','category','location','status','rating','notes'];
+  const head = cols.join(',');
+  const rows = books.map(b => cols.map(c => csvField(b[c])).join(','));
+  download(`biblioteca_${new Date().toISOString().slice(0,10)}.csv`, [head,...rows].join('\n'), 'text/csv');
+  showToast('Export CSV pronto ✓');
+}
+function importJSON(ev){
+  const file = ev.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      let incoming = Array.isArray(parsed) ? parsed : (parsed.books || []);
+      if(!Array.isArray(incoming)){ showToast('File non valido','error'); return; }
+      if(parsed.categories && Array.isArray(parsed.categories)){
+        parsed.categories.forEach(c=>{ if(!categories.some(x=>x.toLowerCase()===c.toLowerCase())) categories.push(c); });
+        categories.sort((a,b)=>a.localeCompare(b)); saveCats(false);
+      }
+      const byId = {}; books.forEach(b=>byId[b.id]=b);
+      incoming.forEach(b=>{ if(b && b.title){ byId[b.id||(Date.now()+Math.random())] = b; } });
+      books = Object.values(byId);
+      saveBooks(); renderBooks();
+      showToast(`Importati ${incoming.length} libri ✓`);
+    } catch(err){ showToast('Errore lettura file','error'); }
+  };
+  reader.readAsText(file);
+  ev.target.value = '';
+}
+
+/* ---------- Render ---------- */
+function escapeHtml(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function renderStats(){
+  const total = books.length;
+  const letti = books.filter(b=>b.status==='letto').length;
+  const leggendo = books.filter(b=>b.status==='leggendo').length;
+  const da = books.filter(b=>b.status==='daLeggere').length;
+  document.getElementById('stats-bar').innerHTML = `
+    <div class="stat"><div class="stat-num">${total}</div><div class="stat-label">Totale</div></div>
+    <div class="stat"><div class="stat-num" style="color:#30d158">${letti}</div><div class="stat-label">Letti</div></div>
+    <div class="stat"><div class="stat-num" style="color:#ffd60a">${leggendo}</div><div class="stat-label">In lettura</div></div>
+    <div class="stat"><div class="stat-num" style="color:#636cff">${da}</div><div class="stat-label">Da leggere</div></div>`;
+}
+function updateCatFilter(){
+  const sel = document.getElementById('filter-cat');
+  const cur = sel.value;
+  const used = [...new Set(books.map(b=>b.category).filter(Boolean))];
+  const all = [...new Set([...categories, ...used])].sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML = '<option value="">Tutte le categorie</option>' + all.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  sel.value = cur;
+}
+function renderBooks(){
+  const q = document.getElementById('search-input').value.toLowerCase();
+  const status = document.getElementById('filter-status').value;
+  const cat = document.getElementById('filter-cat').value;
+  const sort = document.getElementById('sort-by').value;
+  renderStats(); updateCatFilter(); updateSyncDot();
+  let filtered = books.filter(b => {
+    const matchQ = !q || b.title.toLowerCase().includes(q) || (b.author||'').toLowerCase().includes(q);
+    const matchS = !status || b.status === status;
+    const matchC = !cat || b.category === cat;
+    return matchQ && matchS && matchC;
+  });
+  filtered.sort((a,b) => {
+    if(sort==='title') return a.title.localeCompare(b.title);
+    if(sort==='author') return (a.author||'').localeCompare(b.author||'');
+    if(sort==='rating') return (b.rating||0)-(a.rating||0);
+    return b.id - a.id;
+  });
+  const grid = document.getElementById('books-grid');
+  if(filtered.length===0){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="icon">📚</div><p>${books.length===0 ? 'Aggiungi il tuo primo libro con ＋' : 'Nessun libro trovato'}</p></div>`;
+    return;
+  }
+  grid.innerHTML = filtered.map(b => {
+    const stars = b.rating ? '★'.repeat(b.rating)+'☆'.repeat(5-b.rating) : '';
+    const statusTag = {letto:'<span class="tag tag-letto">✅ Letto</span>',leggendo:'<span class="tag tag-leggendo">📖 Leggendo</span>',daLeggere:'<span class="tag tag-daLeggere">🔖 Da leggere</span>'}[b.status]||'';
+    const catTag = b.category ? `<span class="tag tag-cat">${escapeHtml(b.category)}</span>` : '';
+    const coverHtml = b.coverUrl ? `<div class="book-cover"><img src="${b.coverUrl}" onerror="this.parentElement.innerHTML='📖'" loading="lazy"></div>` : `<div class="book-cover">📖</div>`;
+    return `<div class="book-card">${coverHtml}
+      <div class="book-info">
+        <div class="book-title" title="${escapeHtml(b.title)}">${escapeHtml(b.title)}</div>
+        <div class="book-author">${escapeHtml(b.author||'Autore sconosciuto')}</div>
+        <div class="book-tags">${statusTag}${catTag}</div>
+        ${stars ? `<div class="stars">${stars}</div>` : ''}
+        ${b.location ? `<div class="book-location">📍 ${escapeHtml(b.location)}</div>` : ''}
+        <div class="book-actions">
+          <button class="btn btn-secondary btn-sm" onclick="editBook(${b.id})">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteBook(${b.id})">🗑</button>
+        </div>
+      </div></div>`;
+  }).join('');
+}
+
+/* ---------- Scanner + fetch ---------- */
+function openScanner(){
+  document.getElementById('modal-scanner').style.display='flex';
+  document.getElementById('isbn-manual-input').value='';
+  document.getElementById('isbn-loading').style.display='none';
+  startQR();
+}
+function startQR(){
+  if(scannerActive) return;
+  try {
+    html5QrCode = new Html5Qrcode("qr-reader");
+    html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 130 } },
+      (decodedText) => {
+        if(/^\d{10,13}$/.test(decodedText)){ stopQR(); document.getElementById('isbn-manual-input').value = decodedText; fetchByISBN(decodedText); }
+      }, () => {}
+    ).then(()=>{ scannerActive=true; }).catch(err => {
+      document.getElementById('qr-reader').innerHTML = '<div style="padding:24px;text-align:center;color:#8e8e93;font-size:13px">📷 Fotocamera non disponibile.<br>Concedi il permesso alla fotocamera nelle impostazioni del browser, oppure usa l\'inserimento manuale qui sotto.</div>';
+    });
+  } catch(e){ document.getElementById('qr-reader').innerHTML = '<div style="padding:24px;text-align:center;color:#8e8e93;font-size:13px">📷 Usa l\'inserimento manuale qui sotto.</div>'; }
+}
+function stopQR(){ if(html5QrCode && scannerActive){ html5QrCode.stop().catch(()=>{}); scannerActive=false; } }
+function closeScanner(){ stopQR(); document.getElementById('modal-scanner').style.display='none'; }
+
+async function tryOpenLibrary(isbn){
+  try {
+    const resp = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+    const data = await resp.json();
+    const info = data[`ISBN:${isbn}`];
+    if(!info) return null;
+    return {
+      title: info.title || '',
+      author: info.authors ? info.authors.map(a=>a.name).join(', ') : '',
+      year: info.publish_date ? (info.publish_date.match(/\d{4}/)?.[0]||'') : '',
+      isbn, coverUrl: info.cover ? (info.cover.large||info.cover.medium||info.cover.small) : ''
+    };
+  } catch(e){ return null; }
+}
+async function tryGoogleBooks(isbn){
+  try {
+    const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+    const data = await resp.json();
+    if(!data.items || !data.items.length) return null;
+    const v = data.items[0].volumeInfo;
+    let cover = v.imageLinks ? (v.imageLinks.thumbnail||v.imageLinks.smallThumbnail||'') : '';
+    cover = cover.replace('http://','https://').replace('&edge=curl','');
+    return {
+      title: v.title || '',
+      author: v.authors ? v.authors.join(', ') : '',
+      year: v.publishedDate ? (v.publishedDate.match(/\d{4}/)?.[0]||'') : '',
+      isbn, coverUrl: cover
+    };
+  } catch(e){ return null; }
+}
+async function fetchByISBN(isbn){
+  isbn = isbn || document.getElementById('isbn-manual-input').value.replace(/[^0-9X]/gi,'');
+  if(!isbn || isbn.length < 10){ showToast('ISBN non valido','error'); return; }
+  document.getElementById('isbn-loading').style.display='block';
+  try {
+    let book = await tryOpenLibrary(isbn);
+    if(!book || !book.title) book = await tryGoogleBooks(isbn);
+    if(book && book.title){ closeScanner(); openManualForm(book); }
+    else showToast('ISBN non trovato su nessuna fonte – inserisci a mano','error');
+  } catch(e){ showToast('Errore di rete – inserisci a mano','error'); }
+  finally { document.getElementById('isbn-loading').style.display='none'; }
+}
+
+/* ---------- Form ---------- */
+function openManualForm(prefill){
+  closeScanner();
+  currentRating = 0;
+  document.getElementById('f-edit-id').value = '';
+  document.getElementById('form-title').textContent = 'Aggiungi libro';
+  document.getElementById('f-title').value = prefill?.title || '';
+  document.getElementById('f-author').value = prefill?.author || '';
+  document.getElementById('f-year').value = prefill?.year || '';
+  document.getElementById('f-isbn').value = prefill?.isbn || '';
+  fillCatSelect('');
+  document.getElementById('f-location').value = '';
+  document.getElementById('f-status').value = 'daLeggere';
+  document.getElementById('f-notes').value = '';
+  document.getElementById('f-cover-url').value = prefill?.coverUrl || '';
+  const preview = document.getElementById('book-cover-preview'); const img = document.getElementById('cover-img');
+  if(prefill?.coverUrl){ img.src = prefill.coverUrl; preview.style.display='block'; } else preview.style.display='none';
+  setRating(0);
+  document.getElementById('modal-form').style.display='flex';
+}
+function editBook(id){
+  const b = books.find(x=>x.id===id); if(!b) return;
+  currentRating = b.rating || 0;
+  document.getElementById('f-edit-id').value = id;
+  document.getElementById('form-title').textContent = 'Modifica libro';
+  document.getElementById('f-title').value = b.title;
+  document.getElementById('f-author').value = b.author||'';
+  document.getElementById('f-year').value = b.year||'';
+  document.getElementById('f-isbn').value = b.isbn||'';
+  fillCatSelect(b.category||'');
+  document.getElementById('f-location').value = b.location||'';
+  document.getElementById('f-status').value = b.status;
+  document.getElementById('f-notes').value = b.notes||'';
+  document.getElementById('f-cover-url').value = b.coverUrl||'';
+  const preview = document.getElementById('book-cover-preview'); const img = document.getElementById('cover-img');
+  if(b.coverUrl){ img.src=b.coverUrl; preview.style.display='block'; } else preview.style.display='none';
+  setRating(b.rating||0);
+  document.getElementById('modal-form').style.display='flex';
+}
+function setRating(n){ currentRating = n; document.querySelectorAll('.star-btn').forEach((btn,i)=>btn.classList.toggle('active', i<n)); }
+function saveBook(){
+  const title = document.getElementById('f-title').value.trim();
+  if(!title){ showToast('Il titolo è obbligatorio','error'); return; }
+  const catVal = document.getElementById('f-cat').value;
+  const editId = document.getElementById('f-edit-id').value;
+  const book = {
+    id: editId ? parseInt(editId) : Date.now(),
+    title,
+    author: document.getElementById('f-author').value.trim(),
+    year: document.getElementById('f-year').value,
+    isbn: document.getElementById('f-isbn').value.trim(),
+    category: (catVal==='__new__'?'':catVal),
+    location: document.getElementById('f-location').value.trim(),
+    status: document.getElementById('f-status').value,
+    rating: currentRating,
+    notes: document.getElementById('f-notes').value.trim(),
+    coverUrl: document.getElementById('f-cover-url').value
+  };
+  if(editId){ const idx = books.findIndex(b=>b.id===parseInt(editId)); if(idx>=0) books[idx]=book; }
+  else books.unshift(book);
+  saveBooks(); renderBooks(); closeForm();
+  showToast(editId ? 'Libro aggiornato' : '📚 Libro aggiunto!');
+}
+function deleteBook(id){
+  if(!confirm('Rimuovere questo libro dalla biblioteca?')) return;
+  books = books.filter(b=>b.id!==id);
+  saveBooks(); renderBooks();
+  showToast('Libro rimosso');
+}
+function closeForm(){ document.getElementById('modal-form').style.display='none'; }
+
+/* ---------- Avvio ---------- */
+updateSyncDot();
+renderBooks();
+if(ghConfig && ghConfig.token){ ghPull(false); }
+</script>
+</body>
+</html>
