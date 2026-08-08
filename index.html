@@ -613,26 +613,36 @@ function gbToBook(v, isbn){
     isbn: isbn||'', coverUrl: cover
   };
 }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 async function gbFetch(qRaw, tag){
   const keyPart = (window.GBOOKS_KEY ? `&key=${window.GBOOKS_KEY}` : '');
-  try {
-    const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${qRaw}${keyPart}&maxResults=5`);
-    if(!resp.ok){ diagLog += ` ${tag}:${resp.status}`; return []; }
-    const data = await resp.json();
-    if(data.error){ diagLog += ` ${tag}:err`; return []; }
-    if(data.items && data.items.length){ diagLog += ` ${tag}:OK`; return data.items; }
-    diagLog += ` ${tag}:0`;
-    return [];
-  } catch(e){ diagLog += ` ${tag}:rete`; return []; }
+  let last = '';
+  for(let attempt=0; attempt<3; attempt++){
+    try {
+      const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${qRaw}${keyPart}&maxResults=5`);
+      if(resp.ok){
+        const data = await resp.json();
+        if(data.error){ last='err'; break; }
+        if(data.items && data.items.length){ diagLog += ` ${tag}:OK`; return data.items; }
+        diagLog += ` ${tag}:0`; return [];
+      }
+      last = resp.status;
+      if([429,500,502,503].includes(resp.status)){ await sleep(700*(attempt+1)); continue; }
+      break;
+    } catch(e){ last='rete'; await sleep(500); }
+  }
+  diagLog += ` ${tag}:${last}`;
+  return [];
 }
 async function srcGoogleBooks(isbn){
   const items = await gbFetch(`isbn:${isbn}`, 'Google');
   if(!items.length) return null;
-  let hit = items.find(it => {
+  // Solo corrispondenza ESATTA dell'ISBN: mai ripiegare su un risultato "vicino"
+  const hit = items.find(it => {
     const ids = (it.volumeInfo && it.volumeInfo.industryIdentifiers) || [];
     return ids.some(x => (x.identifier||'').replace(/[^0-9Xx]/g,'').toUpperCase() === isbn);
-  }) || items.find(it => it.volumeInfo && it.volumeInfo.title);
-  if(!hit || !hit.volumeInfo || !hit.volumeInfo.title) return null;
+  });
+  if(!hit || !hit.volumeInfo || !hit.volumeInfo.title){ diagLog += ' Google:no-match'; return null; }
   return gbToBook(hit.volumeInfo, isbn);
 }
 
