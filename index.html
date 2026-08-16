@@ -240,7 +240,7 @@
     </div>
 
     <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="closeSettings()">Chiudi</button>
-    <div style="text-align:center; font-size:11px; color:#636366; margin-top:14px;">Versione 11 · verifica ISBN su tutte le fonti</div>
+    <div style="text-align:center; font-size:11px; color:#636366; margin-top:14px;">Versione 12 · protezione anti-riduzione libri</div>
   </div>
 </div>
 
@@ -416,20 +416,26 @@ async function ghReadRemote(){
     return { ok:false, status:resp.status };
   } catch(e){ return { ok:false, status:'rete' }; }
 }
+// Soglia: consideriamo "riduzione sospetta" un calo di almeno 3 libri E almeno il 15% del totale
+function isSuspiciousDrop(fromCount, toCount){
+  if(fromCount <= 0) return false;
+  const drop = fromCount - toCount;
+  return drop >= 3 && (drop / fromCount) >= 0.15;
+}
 async function ghPush(manual){
   if(!ghConfig || !ghConfig.token){ setSyncStatus(); if(manual) showToast('Configura prima GitHub','error'); return; }
   setSyncStatus('saving');
   const remote = await ghReadRemote();
   if(!remote.ok){ setSyncStatus('error'); showToast('Sync non riuscito ('+remote.status+') – i dati restano in locale','error'); return; }
-  // PROTEZIONE: non sovrascrivere un archivio pieno sul repo con uno vuoto/quasi vuoto in locale
   const remoteCount = (remote.books && remote.books.length) || 0;
-  if(remoteCount >= 5 && books.length === 0){
+  // PROTEZIONE: non sovrascrivere un archivio più pieno sul repo con uno più povero in locale
+  if(isSuspiciousDrop(remoteCount, books.length)){
     if(!manual){
       setSyncStatus('error','salvataggio bloccato');
-      showToast(`Salvataggio bloccato: sul repo ci sono ${remoteCount} libri e in locale 0. Nulla è stato sovrascritto.`,'error');
+      showToast(`Salvataggio bloccato: sul repo ci sono ${remoteCount} libri, in locale solo ${books.length}. Nulla è stato sovrascritto.`,'error');
       return;
     }
-    if(!confirm(`ATTENZIONE: stai per sostituire ${remoteCount} libri sul repo con 0. Sei sicuro?`)){ setSyncStatus(); return; }
+    if(!confirm(`ATTENZIONE: stai per sostituire ${remoteCount} libri sul repo con ${books.length}. Sei sicuro di voler procedere?`)){ setSyncStatus(); return; }
   }
   try {
     const url = `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}`;
@@ -456,11 +462,14 @@ async function ghPull(manual){
   if(remote.missing){ if(manual) showToast('File non ancora presente sul repo','error'); return; }
   if(remote.unreadable){ if(manual) showToast('File sul repo illeggibile: tengo i libri locali','error'); return; }
   const inBooks = remote.books || [];
-  // PROTEZIONE: mai svuotare un archivio locale pieno con un repo vuoto
-  if(inBooks.length === 0 && books.length > 0){
-    setSyncStatus();
-    if(manual) showToast(`Il repo è vuoto: mantengo i ${books.length} libri locali (non sovrascritti)`,'error');
-    return;
+  // PROTEZIONE: mai sostituire un archivio locale più pieno con uno del repo più povero
+  if(isSuspiciousDrop(books.length, inBooks.length)){
+    if(!manual){
+      setSyncStatus();
+      showToast(`Caricamento bloccato: sul repo ci sono solo ${inBooks.length} libri contro ${books.length} in locale. Nulla è stato sovrascritto.`,'error');
+      return;
+    }
+    if(!confirm(`ATTENZIONE: il repo ha ${inBooks.length} libri, qui ne hai ${books.length}. Sostituire comunque quelli locali?`)) return;
   }
   books = inBooks;
   if(remote.categories) categories = remote.categories;
